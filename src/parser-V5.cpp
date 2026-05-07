@@ -19,6 +19,14 @@
 
 using namespace std;
 
+// A character block stored as a half-open range [start, end) into a
+// vector<string_view> of filtered lines. The referenced lines must outlive
+// any BlockSpan that indexes them.
+struct BlockSpan {
+    std::size_t start = 0;  // inclusive
+    std::size_t end   = 0;  // exclusive
+};
+
 string loadFileIntoString(const string &filename);
 vector<string_view> splitLines(const string &buffer);
 void pointerPlayOptimized(const string &filename);
@@ -198,15 +206,15 @@ static bool startsWithPrefix(string_view sv, string_view prefix) {
     return true;
 }
 
-unordered_map<int, vector<string>> blockMapping(const vector<string_view> &totalLines) {
+unordered_map<int, BlockSpan> blockMapping(const vector<string_view> &totalLines) {
     // The leading-whitespace prefix of the first_name= discriminator. We
     // look for it after trimming leading whitespace from the next line.
     static const string_view firstNamePrefix = "first_name=";
 
-    unordered_map<int, vector<string>> blockMap;
+    unordered_map<int, BlockSpan> blockMap;
 
-    vector<string> block;
     int currentBlockId = -1;
+    std::size_t currentBlockStart = 0;
     int braceDepth = 0;
     bool patternCheck = false;
 
@@ -226,30 +234,36 @@ unordered_map<int, vector<string>> blockMapping(const vector<string_view> &total
 
                 // Confirmed: this is a character block opening.
                 currentBlockId = parsedId;
+                currentBlockStart = i;
                 patternCheck = true;
                 braceDepth = 0;
-                block.clear();
-                block.push_back(string(totalLines[i]));
 
                 for (char c : totalLines[i]) {
                     if (c == '{') braceDepth++;
                     if (c == '}') braceDepth--;
                 }
+
+                if (braceDepth <= 0) {
+                    blockMap[currentBlockId] = BlockSpan{currentBlockStart, i + 1};
+
+                    currentBlockId = -1;
+                    currentBlockStart = 0;
+                    braceDepth = 0;
+                    patternCheck = false;
+                }
             }
         }
         else {
-            block.push_back(string(totalLines[i]));
-
             for (char c : totalLines[i]) {
                 if (c == '{') braceDepth++;
                 if (c == '}') braceDepth--;
             }
 
             if (braceDepth <= 0) {
-                blockMap[currentBlockId] = block;
+                blockMap[currentBlockId] = BlockSpan{currentBlockStart, i + 1};
 
-                block.clear();
                 currentBlockId = -1;
+                currentBlockStart = 0;
                 braceDepth = 0;
                 patternCheck = false;
             }
@@ -290,11 +304,11 @@ vector<int> extractIdsFromLine(const string &line) {
     return ids;
 }
 
-vector<int> extractSpouseIds(const vector<string> &block) {
+vector<int> extractSpouseIds(const vector<string_view> &allLines, const BlockSpan &span) {
     vector<int> spouseIds;
 
-    for (const string &rawLine : block) {
-        string line = trim(rawLine);
+    for (std::size_t i = span.start; i < span.end; i++) {
+        string line = trim(string(allLines[i]));
 
         if (line.rfind("spouse=", 0) == 0) {
             vector<int> found = extractIdsFromLine(line);
@@ -308,11 +322,11 @@ vector<int> extractSpouseIds(const vector<string> &block) {
     return spouseIds;
 }
 
-vector<int> extractChildIds(const vector<string> &block) {
+vector<int> extractChildIds(const vector<string_view> &allLines, const BlockSpan &span) {
     vector<int> childIds;
 
-    for (const string &rawLine : block) {
-        string line = trim(rawLine);
+    for (std::size_t i = span.start; i < span.end; i++) {
+        string line = trim(string(allLines[i]));
 
         if (line.rfind("child=", 0) == 0) {
             vector<int> found = extractIdsFromLine(line);
@@ -326,20 +340,165 @@ vector<int> extractChildIds(const vector<string> &block) {
     return childIds;
 }
 
+vector<int> extractIdsByPrefix(const vector<string> &block, const string &prefix) {
+    vector<int> ids;
+
+    for (const string &rawLine : block) {
+        string line = trim(rawLine);
+
+        if (line.rfind(prefix, 0) == 0) {
+            vector<int> found = extractIdsFromLine(line);
+
+            for (int id : found) {
+                ids.push_back(id);
+            }
+        }
+    }
+
+    return ids;
+}
+
+/*
+################################
+Temporary Character Block Stats
+################################
+*/
+
+struct CharacterBlockStats {
+    size_t characterCount = 0;
+    size_t totalLines = 0;
+    size_t totalSpouseRefs = 0;
+    size_t totalChildRefs = 0;
+};
+
+struct RelationshipRefCounts {
+    size_t spouseRefs = 0;
+    size_t childRefs = 0;
+};
+
+RelationshipRefCounts countRelationshipRefs(const vector<string_view> &allLines, const BlockSpan &span) {
+    RelationshipRefCounts counts;
+
+    for (std::size_t i = span.start; i < span.end; i++) {
+        string line = trim(string(allLines[i]));
+
+        if (line.rfind("spouse=", 0) == 0) {
+            counts.spouseRefs += extractIdsFromLine(line).size();
+        }
+        else if (line.rfind("child=", 0) == 0) {
+            counts.childRefs += extractIdsFromLine(line).size();
+        }
+    }
+
+    return counts;
+}
+
+RelationshipRefCounts countRelationshipRefs(const vector<string> &block) {
+    RelationshipRefCounts counts;
+
+    for (const string &rawLine : block) {
+        string line = trim(rawLine);
+
+        if (line.rfind("spouse=", 0) == 0) {
+            counts.spouseRefs += extractIdsFromLine(line).size();
+        }
+        else if (line.rfind("child=", 0) == 0) {
+            counts.childRefs += extractIdsFromLine(line).size();
+        }
+    }
+
+    return counts;
+}
+
+CharacterBlockStats collectCharacterBlockStats(
+    const unordered_map<int, BlockSpan> &characterBlocks,
+    const vector<string_view> &allLines
+) {
+    CharacterBlockStats stats;
+    stats.characterCount = characterBlocks.size();
+
+    for (const auto &entry : characterBlocks) {
+        const BlockSpan &span = entry.second;
+        RelationshipRefCounts counts = countRelationshipRefs(allLines, span);
+
+        stats.totalLines += span.end - span.start;
+        stats.totalSpouseRefs += counts.spouseRefs;
+        stats.totalChildRefs += counts.childRefs;
+    }
+
+    return stats;
+}
+
+CharacterBlockStats collectCharacterBlockStats(const unordered_map<int, vector<string>> &characterBlocks) {
+    CharacterBlockStats stats;
+    stats.characterCount = characterBlocks.size();
+
+    for (const auto &entry : characterBlocks) {
+        const vector<string> &block = entry.second;
+        RelationshipRefCounts counts = countRelationshipRefs(block);
+
+        stats.totalLines += block.size();
+        stats.totalSpouseRefs += counts.spouseRefs;
+        stats.totalChildRefs += counts.childRefs;
+    }
+
+    return stats;
+}
+
+void printCharacterBlockStats(const CharacterBlockStats &stats, const string &label) {
+    cout << "\n";
+    cout << "|------------TEMP CHARACTER BLOCK STATS: " << label << "------------|" << endl;
+
+    cout << "Characters counted: "
+         << formatWithCommas(to_string(stats.characterCount)) << endl;
+
+    cout << "Total block lines: "
+         << formatWithCommas(to_string(stats.totalLines)) << endl;
+
+    cout << "Total spouse references: "
+         << formatWithCommas(to_string(stats.totalSpouseRefs)) << endl;
+
+    cout << "Total child references: "
+         << formatWithCommas(to_string(stats.totalChildRefs)) << endl;
+
+    cout << "Total spouse + child references: "
+         << formatWithCommas(to_string(stats.totalSpouseRefs + stats.totalChildRefs)) << endl;
+
+    if (stats.characterCount > 0) {
+        cout << fixed << setprecision(4);
+
+        cout << "Average lines per character block: "
+             << static_cast<double>(stats.totalLines) / stats.characterCount << endl;
+
+        cout << "Average spouse references per character: "
+             << static_cast<double>(stats.totalSpouseRefs) / stats.characterCount << endl;
+
+        cout << "Average child references per character: "
+             << static_cast<double>(stats.totalChildRefs) / stats.characterCount << endl;
+
+        cout << "Average spouse + child references per character: "
+             << static_cast<double>(stats.totalSpouseRefs + stats.totalChildRefs) / stats.characterCount << endl;
+    }
+
+    cout << "|------------------------------------------------------------|" << endl;
+    cout << "\n";
+}
+
 void progenySortRecursive(
-    unordered_map<int, vector<string>> &sourceMap,
+    unordered_map<int, BlockSpan> &sourceMap,
     unordered_map<int, vector<string>> &resultMap,
     set<int> &processedDescendants,
+    const vector<string_view> &allLines,
     int ID
 ) {
-    vector<string> currentBlock;
+    vector<string> *currentBlock = nullptr;
 
     // If this character is already copied into resultMap, use that block.
     // This matters if someone was copied earlier as a spouse.
     auto resultIt = resultMap.find(ID);
 
     if (resultIt != resultMap.end()) {
-        currentBlock = resultIt->second;
+        currentBlock = &resultIt->second;
     }
     else {
         auto sourceIt = sourceMap.find(ID);
@@ -349,10 +508,15 @@ void progenySortRecursive(
             return;
         }
 
-        currentBlock = sourceIt->second;
+        vector<string> blockCopy;
+        blockCopy.reserve(sourceIt->second.end - sourceIt->second.start);
+        for (std::size_t i = sourceIt->second.start; i < sourceIt->second.end; i++) {
+            blockCopy.emplace_back(allLines[i]);
+        }
 
         // Copy this descendant/founder into the result map.
-        resultMap[ID] = currentBlock;
+        auto inserted = resultMap.emplace(ID, std::move(blockCopy));
+        currentBlock = &inserted.first->second;
 
         // Delete from source map as we go.
         sourceMap.erase(sourceIt);
@@ -366,14 +530,20 @@ void progenySortRecursive(
     processedDescendants.insert(ID);
 
     // Copy spouses, but DO NOT recurse through spouses.
-    vector<int> spouseIds = extractSpouseIds(currentBlock);
+    vector<int> spouseIds = extractIdsByPrefix(*currentBlock, "spouse=");
 
     for (int spouseID : spouseIds) {
         if (resultMap.find(spouseID) == resultMap.end()) {
             auto spouseIt = sourceMap.find(spouseID);
 
             if (spouseIt != sourceMap.end()) {
-                resultMap[spouseID] = spouseIt->second;
+                vector<string> blockCopy;
+                blockCopy.reserve(spouseIt->second.end - spouseIt->second.start);
+                for (std::size_t i = spouseIt->second.start; i < spouseIt->second.end; i++) {
+                    blockCopy.emplace_back(allLines[i]);
+                }
+
+                resultMap[spouseID] = std::move(blockCopy);
                 sourceMap.erase(spouseIt);
             }
             else {
@@ -383,18 +553,22 @@ void progenySortRecursive(
     }
 
     // Recursively follow children only.
-    vector<int> childIds = extractChildIds(currentBlock);
+    vector<int> childIds = extractIdsByPrefix(*currentBlock, "child=");
 
     for (int childID : childIds) {
-        progenySortRecursive(sourceMap, resultMap, processedDescendants, childID);
+        progenySortRecursive(sourceMap, resultMap, processedDescendants, allLines, childID);
     }
 }
 
-unordered_map<int, vector<string>> progenySort(unordered_map<int, vector<string>> &characterMap, int ID) {
+unordered_map<int, vector<string>> progenySort(
+    unordered_map<int, BlockSpan> &characterMap,
+    const vector<string_view> &allLines,
+    int ID
+) {
     unordered_map<int, vector<string>> progenyMap;
     set<int> processedDescendants;
 
-    progenySortRecursive(characterMap, progenyMap, processedDescendants, ID);
+    progenySortRecursive(characterMap, progenyMap, processedDescendants, allLines, ID);
 
     return progenyMap;
 }
@@ -413,6 +587,9 @@ std::string buildCharacterBlocksString(const std::vector<std::string_view>& char
     }
     return newBuffer;
 }
+
+
+
 
 
 void pointerPlayOptimized(const string &filename) {
@@ -454,26 +631,35 @@ void pointerPlayOptimized(const string &filename) {
         vector<string_view> finalCharacterLines = splitLines(reduced);
         recordMemoryUsage(memorytable, memoryValues, true, true, 8);
 
-        // [9]  |  Record Memory Usage | After mapping blocks
-        unordered_map<int, vector<string>> characterMap = blockMapping(finalCharacterLines);
+        // [9]  |  Record Memory Usage | After mapping block spans
+        unordered_map<int, BlockSpan> characterMap = blockMapping(finalCharacterLines);
         recordMemoryUsage(memorytable, memoryValues, true, true, 9);
 
-        // [10]  |  Record Memory Usage | After clearing unorganized block views
-        finalCharacterLines.clear();
-        finalCharacterLines.shrink_to_fit();
+        // TEMP STATS: all character blocks before progenySort mutates characterMap.
+        CharacterBlockStats allCharacterStats = collectCharacterBlockStats(characterMap, finalCharacterLines);
+        printCharacterBlockStats(allCharacterStats, "ALL CHARACTERS");
+
+        // [10]  |  Record Memory Usage | After collecting all-character stats.
         recordMemoryUsage(memorytable, memoryValues, true, true, 10);
 
         // [11]  |  Record Memory Usage | After sorting founder descendants/spouses
         int founderID = 37676;
-        unordered_map<int, vector<string>> dynastyMap = progenySort(characterMap, founderID);
+        unordered_map<int, vector<string>> dynastyMap = progenySort(characterMap, finalCharacterLines, founderID);
         recordMemoryUsage(memorytable, memoryValues, true, true, 11);
+
+        // TEMP STATS: only the extracted dynasty/progeny map.
+        CharacterBlockStats dynastyStats = collectCharacterBlockStats(dynastyMap);
+        printCharacterBlockStats(dynastyStats, "DYNASTY / PROGENY MAP");
 
         cout << "Dynasty/progeny map size: " << formatWithCommas(to_string(dynastyMap.size()))<< endl;
         cout << "Remaining source map size: " << formatWithCommas(to_string(characterMap.size())) << endl << endl;
 
-        // [12]  |  Record Memory Usage | After clearing unrelated character map
+        finalCharacterLines.clear();
+        finalCharacterLines.shrink_to_fit();
+
+        // [12]  |  Record Memory Usage | After clearing source spans and block views.
         characterMap.clear();
-        unordered_map<int, vector<string>>().swap(characterMap);
+        unordered_map<int, BlockSpan>().swap(characterMap);
         recordMemoryUsage(memorytable, memoryValues, true, true, 12);
 
         memoryLogging(memorytable, false, 0);

@@ -104,3 +104,30 @@ matter, not how easy they are.
   `string_utill.cpp` keep their existing names (typos and all) to
   avoid any risk of breaking the build during migration. Renames are
   a separate decision for later.
+
+## M1 - DONE (Tier 2 memory refactor)
+
+Completed: [date]
+
+Changes:
+- Source map (181K entries) refactored from
+  unordered_map<int, vector<string>> to unordered_map<int, BlockSpan>
+- BlockSpan = { start, end } half-open range into filtered line vector
+- extractSpouseIds, extractChildIds refactored to take (allLines, span)
+- progenySortRecursive materializes only into the dynasty result map
+- finalCharacterLines lifetime extended through dynasty walk
+
+Results:
+- Step [9] memory: 773 MB → 379 MB (-51%)
+- End memory: 410 MB → 305 MB (-26%)
+- Wall-time: 1.81s → 1.55s (-15%)
+- Output: byte-identical to baseline (all stats match)
+
+Known follow-up (NOT current scope):
+- Step [5] peak (809 MB) limited by fileBuffer/reduced coexistence.
+  Streaming the filtered buffer would address this. Future ticket.
+- memory_utill.cpp hardcoded label "After Clearing unorganized blocks"
+  no longer accurately describes step [10]. Trivial fix in M2 or its
+  own ticket.
+
+  
