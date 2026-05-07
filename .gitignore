@@ -1,0 +1,74 @@
+﻿# ============================================================================
+# Build artifacts
+# ============================================================================
+*.exe
+*.obj
+*.o
+*.s
+*.a
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.ps1
+build/
+out/
+output/
+
+# ============================================================================
+# Compiler / IDE state
+# ============================================================================
+.vs/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.aps
+*.vcxproj.user
+.cache/
+compile_commands.json
+
+# Allow .vscode but ignore per-machine state
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# ============================================================================
+# Project-specific - DO NOT COMMIT GAME SAVES
+# ============================================================================
+# Keep the folder structure but never commit the actual gamestate
+save_game/*
+!save_game/.gitkeep
+
+# Build logs (generated each run)
+build_logs/
+
+# Parser output (generated)
+data_out/
+
+# Temp / scratch
+tmp/
+scratch/
+*.tmp
+*.bak
+*.swp
+
+# ============================================================================
+# OS noise
+# ============================================================================
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

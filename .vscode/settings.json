@@ -1,0 +1,23 @@
+{
+    "files.associations": {
+        "regex": "cpp",
+        "unordered_set": "cpp",
+        "utility": "cpp",
+        "ostream": "cpp",
+        "iostream": "cpp",
+        "unordered_map": "cpp",
+        "iosfwd": "cpp",
+        "fstream": "cpp",
+        "initializer_list": "cpp",
+        "valarray": "cpp",
+        "cctype": "cpp",
+        "list": "cpp",
+        "algorithm": "cpp",
+        "map": "cpp",
+        "stdexcept": "cpp",
+        "sstream": "cpp",
+        "string_view": "cpp",
+        "iomanip": "cpp"
+    },
+    "cmake.sourceDirectory": "C:/Users/alden/Desktop/CK3_Dynasty_Project/ck3_dynasty_tree/source"
+}
