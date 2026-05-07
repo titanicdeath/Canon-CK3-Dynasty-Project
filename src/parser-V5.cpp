@@ -1,25 +1,18 @@
 #include <windows.h>
 #include <psapi.h>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
-#include <string_view>
-#include <stdexcept>
-#include <algorithm>
-#include <list>
+
 #include <cctype>
-#include <iomanip>
-#include <map>
 #include <filesystem>
-#include <regex>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <set>
- 
-// #include "../library/memory_utill.hpp"
-// #include "../library/string_utill.hpp"
-// #include <memory_utill.cpp>
-// #include <string_utill.cpp>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 #include "../include/memory_utill.hpp"
 #include "../include/string_utill.hpp"
@@ -29,8 +22,6 @@ using namespace std;
 string loadFileIntoString(const string &filename);
 vector<string_view> splitLines(const string &buffer);
 void pointerPlayOptimized(const string &filename);
-
-vector<string> findBlock(const vector<string_view> &totalLines, const string &charID);
 
 
 // Load the entire file into a single string
@@ -75,8 +66,7 @@ bool firstNameCheck(string_view current, const string& check) {
     return true;
 }
 
-vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines, string &buffer){
-    // cout << "[DEBUG] fCB 1" << endl;
+vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines) {
     vector<string_view> filtered;
     bool inBlock = false;
     bool nameInit = false;
@@ -90,43 +80,25 @@ vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines, s
 
     int foundBlockTypeA = 0;
     int foundBlockTypeB = 0;
-    int lineNumBefore = allLines.size();
-    int lineNumAfter;
+    int lineNumBefore = static_cast<int>(allLines.size());
+    int lineNumAfter = 0;
     int *counters[4] = {&foundBlockTypeA, &foundBlockTypeB, &lineNumBefore, &lineNumAfter};
 
-
     for (std::size_t i = 0; i < allLines.size(); i++) {
-        //cout << "[DEBUG] fCB 2." << i << endl;
         // If not in a block, check for the two-line pattern:
         //   line i ends with "={"
-        //   line i+1 starts with "first_name="
+        //   line i+1 starts with "\tfirst_name="
         if (!inBlock) {
-            //cout << "[DEBUG] fCB 4." << i << endl;
             if (i + 1 < allLines.size()) {
-                //cout << "[DEBUG] fCB 6." << i << endl;
-                // Trim left for next line (to ignore leading spaces/tabs)
-                // do a small inline function:
-                auto ltrim = [](string_view sv) {
-                    std::size_t j = 0;
-                    while (j < sv.size() && isspace((unsigned char)sv[j])) {
-                        j++;
-                    }
-                    return sv.substr(j);
-                };
-                
                 // Check if line i ends with "={"
                 const string_view &lineA = allLines[i];
                 if (lineA.size() >= 2 && lineA.substr(lineA.size() - 2) == "={") {
-                    // cout << "[DEBUG] fCB 5." << i << endl;
                     // Check next line for first_name=
-                    
                     if (inBlock == false) nameInit = firstNameCheck(allLines[i+1], "\tfirst_name=");
-                
+
                     if (nameInit == true) {
                         // This is the start of a character block
                         foundBlockTypeA++;
-                        //cout << "[DEBUG] fCB 7." << i << endl;
-                        //cout << "[DEBUG] fCB 7." << i << ":\t" << allLines[i+1] << endl;
                         inBlock = true;
                         braceDepth = 0;
 
@@ -145,20 +117,15 @@ vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines, s
                         // Done checking; move on
                         continue;
                     }
-                    else if (nameInit == false){ 
-                        //buffer.erase(i);
+                    else if (nameInit == false){
                         foundBlockTypeB++;
-                        
                     }
-                    
                 }
             }
             // If the pattern didn't match, skip this line
         }
         else {
-            //cout << "[DEBUG] fCB 3." << i << endl;
             // We are inside a character block
-
             filtered.push_back(allLines[i]);
             // Count braces
             for (char c : allLines[i]) {
@@ -173,7 +140,7 @@ vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines, s
         }
     }
 
-    lineNumAfter = filtered.size();
+    lineNumAfter = static_cast<int>(filtered.size());
     int colWidthLabel = 25;
     int colWidthValue = 12;
 
@@ -188,11 +155,55 @@ vector<string_view> filterCharacterBlocks(const vector<string_view> &allLines, s
     return filtered;
 }
 
-map<int, vector<string>> blockMapping(const vector<string_view> &totalLines) {
-    regex numericBlockPattern(R"(^\s*([0-9]+)=\{\s*$)");
-    string secondPattern = "first_name=";
+// Try to parse a line of the form "  12345={  " (whitespace + digits + "=" + "{" + optional trailing whitespace).
+// On match, sets outId to the parsed integer and returns true. On no match, returns false.
+// Operates directly on string_view to avoid materializing a string per line.
+static bool tryParseBlockHeader(string_view line, int& outId) {
+    std::size_t i = 0;
+    const std::size_t n = line.size();
 
-    map<int, vector<string>> blockMap;
+    // Skip leading whitespace
+    while (i < n && isspace(static_cast<unsigned char>(line[i]))) i++;
+    if (i >= n) return false;
+
+    // Must start with at least one digit
+    if (!isdigit(static_cast<unsigned char>(line[i]))) return false;
+
+    int value = 0;
+    while (i < n && isdigit(static_cast<unsigned char>(line[i]))) {
+        value = value * 10 + (line[i] - '0');
+        i++;
+    }
+
+    // Must be followed by exactly "={"
+    if (i + 1 >= n) return false;
+    if (line[i] != '=' || line[i + 1] != '{') return false;
+    i += 2;
+
+    // Allow trailing whitespace, but nothing else
+    while (i < n && isspace(static_cast<unsigned char>(line[i]))) i++;
+    if (i != n) return false;
+
+    outId = value;
+    return true;
+}
+
+// Check if a string_view starts with a given prefix. Used in place of
+// std::regex_match for the "next line begins with first_name=" check.
+static bool startsWithPrefix(string_view sv, string_view prefix) {
+    if (sv.size() < prefix.size()) return false;
+    for (std::size_t i = 0; i < prefix.size(); i++) {
+        if (sv[i] != prefix[i]) return false;
+    }
+    return true;
+}
+
+unordered_map<int, vector<string>> blockMapping(const vector<string_view> &totalLines) {
+    // The leading-whitespace prefix of the first_name= discriminator. We
+    // look for it after trimming leading whitespace from the next line.
+    static const string_view firstNamePrefix = "first_name=";
+
+    unordered_map<int, vector<string>> blockMap;
 
     vector<string> block;
     int currentBlockId = -1;
@@ -200,38 +211,36 @@ map<int, vector<string>> blockMapping(const vector<string_view> &totalLines) {
     bool patternCheck = false;
 
     for (size_t i = 0; i < totalLines.size(); i++) {
-        string line = trim(string(totalLines[i]));
-        smatch match;
-
         if (!patternCheck) {
             if (i + 1 < totalLines.size()) {
-                string nextLine = trim(string(totalLines[i + 1]));
+                int parsedId = 0;
+                if (!tryParseBlockHeader(totalLines[i], parsedId)) continue;
 
-                if (regex_match(line, match, numericBlockPattern) &&
-                    nextLine.rfind(secondPattern, 0) == 0) {
-                    
-                    string blockId = match[1];
-                    currentBlockId = stoi(blockId);
+                // Check the next line for the first_name= discriminator.
+                // We trim leading whitespace inline rather than constructing
+                // a temporary string.
+                string_view next = totalLines[i + 1];
+                std::size_t k = 0;
+                while (k < next.size() && isspace(static_cast<unsigned char>(next[k]))) k++;
+                if (!startsWithPrefix(next.substr(k), firstNamePrefix)) continue;
 
-                    patternCheck = true;
-                    braceDepth = 0;
-                    block.clear();
+                // Confirmed: this is a character block opening.
+                currentBlockId = parsedId;
+                patternCheck = true;
+                braceDepth = 0;
+                block.clear();
+                block.push_back(string(totalLines[i]));
 
-                    block.push_back(string(totalLines[i]));
-
-                    for (char c : string(totalLines[i])) {
-                        if (c == '{') braceDepth++;
-                        if (c == '}') braceDepth--;
-                    }
-
-                    continue;
+                for (char c : totalLines[i]) {
+                    if (c == '{') braceDepth++;
+                    if (c == '}') braceDepth--;
                 }
             }
         }
         else {
             block.push_back(string(totalLines[i]));
 
-            for (char c : string(totalLines[i])) {
+            for (char c : totalLines[i]) {
                 if (c == '{') braceDepth++;
                 if (c == '}') braceDepth--;
             }
@@ -256,18 +265,28 @@ Progeny
 ################################
 */
 
+// Extract every run of decimal digits from a line and return them as ints.
+// Replaces an earlier regex-based version; on the hot path this is roughly
+// an order of magnitude faster.
 vector<int> extractIdsFromLine(const string &line) {
     vector<int> ids;
-    regex numberPattern(R"([0-9]+)");
+    const std::size_t n = line.size();
+    std::size_t i = 0;
+    while (i < n) {
+        // Skip non-digits
+        while (i < n && !isdigit(static_cast<unsigned char>(line[i]))) {
+            i++;
+        }
+        if (i >= n) break;
 
-    sregex_iterator current(line.begin(), line.end(), numberPattern);
-    sregex_iterator end;
-
-    while (current != end) {
-        ids.push_back(stoi((*current)[0]));
-        current++;
+        // Accumulate digits
+        int value = 0;
+        while (i < n && isdigit(static_cast<unsigned char>(line[i]))) {
+            value = value * 10 + (line[i] - '0');
+            i++;
+        }
+        ids.push_back(value);
     }
-
     return ids;
 }
 
@@ -308,8 +327,8 @@ vector<int> extractChildIds(const vector<string> &block) {
 }
 
 void progenySortRecursive(
-    map<int, vector<string>> &sourceMap,
-    map<int, vector<string>> &resultMap,
+    unordered_map<int, vector<string>> &sourceMap,
+    unordered_map<int, vector<string>> &resultMap,
     set<int> &processedDescendants,
     int ID
 ) {
@@ -371,8 +390,8 @@ void progenySortRecursive(
     }
 }
 
-map<int, vector<string>> progenySort(map<int, vector<string>> &characterMap, int ID) {
-    map<int, vector<string>> progenyMap;
+unordered_map<int, vector<string>> progenySort(unordered_map<int, vector<string>> &characterMap, int ID) {
+    unordered_map<int, vector<string>> progenyMap;
     set<int> processedDescendants;
 
     progenySortRecursive(characterMap, progenyMap, processedDescendants, ID);
@@ -412,7 +431,7 @@ void pointerPlayOptimized(const string &filename) {
 
         // [3]  |  Record Memory Usage | After splitting lines.
         recordMemoryUsage(memorytable, memoryValues, true, true, 3);
-        vector<string_view> characterOnly = filterCharacterBlocks(totallyAssimilatedLines, fileBuffer);
+        vector<string_view> characterOnly = filterCharacterBlocks(totallyAssimilatedLines);
 
         // [4]  |  Record Memory Usage | After filtering non-character blocks.
         recordMemoryUsage(memorytable, memoryValues, true, true, 4);
@@ -436,7 +455,7 @@ void pointerPlayOptimized(const string &filename) {
         recordMemoryUsage(memorytable, memoryValues, true, true, 8);
 
         // [9]  |  Record Memory Usage | After mapping blocks
-        map<int, vector<string>> characterMap = blockMapping(finalCharacterLines);
+        unordered_map<int, vector<string>> characterMap = blockMapping(finalCharacterLines);
         recordMemoryUsage(memorytable, memoryValues, true, true, 9);
 
         // [10]  |  Record Memory Usage | After clearing unorganized block views
@@ -446,7 +465,7 @@ void pointerPlayOptimized(const string &filename) {
 
         // [11]  |  Record Memory Usage | After sorting founder descendants/spouses
         int founderID = 37676;
-        map<int, vector<string>> dynastyMap = progenySort(characterMap, founderID);
+        unordered_map<int, vector<string>> dynastyMap = progenySort(characterMap, founderID);
         recordMemoryUsage(memorytable, memoryValues, true, true, 11);
 
         cout << "Dynasty/progeny map size: " << formatWithCommas(to_string(dynastyMap.size()))<< endl;
@@ -454,32 +473,15 @@ void pointerPlayOptimized(const string &filename) {
 
         // [12]  |  Record Memory Usage | After clearing unrelated character map
         characterMap.clear();
-        map<int, vector<string>>().swap(characterMap);
+        unordered_map<int, vector<string>>().swap(characterMap);
         recordMemoryUsage(memorytable, memoryValues, true, true, 12);
-        // for (string line : characterMap[charID]) {
-        //     cout << line << endl;
-        // }
 
-
-
-        // [#]  |  Record Memory Usage | After finding blocks.
-        // string charID = "37676";
-        // vector<string> block = findBlock(finalCharacterLines, charID);
-        // recordMemoryUsage(memorytable, memoryValues, true, true, 9);
-    
-
-        memoryLogging(memorytable);
+        memoryLogging(memorytable, false, 0);
 
     } 
     catch (const exception &ex) {
         cerr << "Error: " << ex.what() << "\n";
     }
-}
-
-void pause(){
-    string fuckPointers;
-    cout << "\nEnter anything\n> ";
-    cin >> fuckPointers;
 }
 
 int main() {
@@ -500,6 +502,3 @@ int main() {
     pointerPlayOptimized(inputFile);
     return 0;
 }
-
-// .\universal_compiler.bat > "
-

@@ -1,13 +1,7 @@
-#ifndef STRING_UTIL_cPP
-#define STRING_UTIL_CPP
-#include <windows.h>
-#include <psapi.h>
-#include <stdexcept>
-#include <sstream>   // if needed
-#include <vector>
 #include <string>
+#include <cctype>
 
-#include "../library/string_utill.hpp"
+#include "../include/string_utill.hpp"
 
 using namespace std;
 
@@ -40,5 +34,3 @@ string trim(const string &s) {
     }
     return s.substr(start, end - start);
 }
-
-#endif 
